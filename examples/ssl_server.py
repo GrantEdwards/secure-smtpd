@@ -16,7 +16,8 @@ server = SSLSMTPServer(
     certfile='examples/server.crt',
     keyfile='examples/server.key',
     credential_validator=FakeCredentialValidator(),
-    maximum_execution_time = 1.0
+    maximum_execution_time = 1.0,
+    process_count = 5
     )
 
 server.run()
