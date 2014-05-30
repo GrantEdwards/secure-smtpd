@@ -6,9 +6,10 @@ from smtpd import NEWLINE, EMPTYSTRING
 
 class SMTPChannel(smtpd.SMTPChannel):
     
-    def __init__(self, smtp_server, newsocket, fromaddr, require_authentication=False, credential_validator=None, map=None):
+    def __init__(self, smtp_server, newsocket, fromaddr, require_authentication=False, credential_validator=None, map=None, doExitNow=True):
         smtpd.SMTPChannel.__init__(self, smtp_server, newsocket, fromaddr)
-        asynchat.async_chat.__init__(self, newsocket, map=map)
+        if map is not None:
+            asynchat.async_chat.__init__(self, newsocket, map=map)
         
         self.require_authentication = require_authentication
         self.authenticating = False
@@ -17,11 +18,23 @@ class SMTPChannel(smtpd.SMTPChannel):
         self.password = None
         self.credential_validator = credential_validator
         self.logger = logging.getLogger( secure_smtpd.LOG_NAME )
+        self.doExitNow = doExitNow
     
     def smtp_QUIT(self, arg):
         self.push('221 Bye')
         self.close_when_done()
-        raise ExitNow()
+        if self.doExitNow:
+            raise ExitNow()
+
+    def handle_error(self):
+        exctype,excval,exctb = sys.exc_info()
+        if exctype is ssl.SSLError:
+            self.logger.info("SSL Error: %s",excval)
+        else:
+            self.logger.error("SMTPChannel: handle_error: %s %s", excval,exctb)
+        self.close()
+        if self.doExitNow:
+            raise ExitNow()
         
     def collect_incoming_data(self, data):
         self.__line.append(data)
@@ -62,7 +75,8 @@ class SMTPChannel(smtpd.SMTPChannel):
                 self.push('235 Authentication successful.')
             else:
                 self.push('454 Temporary authentication failure.')
-                raise ExitNow()
+                if self.doExitNow:
+                    raise ExitNow()
     
     # This code is taken directly from the underlying smtpd.SMTPChannel
     # support for AUTH is added.

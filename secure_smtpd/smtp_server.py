@@ -22,53 +22,77 @@ class SMTPServer(smtpd.SMTPServer):
         self.maximum_execution_time = maximum_execution_time
         self.process_count = process_count
         self.process_pool = None
+        self.newsocket = None
+
+    def _start_channel(self,doExitNow=False,map=None):
+
+        pair = self.accept()
+        if pair is None:
+            return
+
+        self.logger.info("connection from %s" % (pair,))
+
+        self.newsocket, fromaddr = pair
+        self.newsocket.settimeout(self.maximum_execution_time)
+        
+        if self.ssl:
+            self.newsocket = ssl.wrap_socket(
+                self.newsocket,
+                server_side=True,
+                certfile=self.certfile,
+                keyfile=self.keyfile,
+                ssl_version=self.ssl_version,
+                )
+
+        channel = SMTPChannel(
+            self,
+            self.newsocket,
+            fromaddr,
+            require_authentication=self.require_authentication,
+            credential_validator=self.credential_validator,
+            doExitNow = doExitNow,
+            map = map
+            )
 
     def handle_accept(self):
-        self.process_pool = ProcessPool(self._accept_subprocess, process_count=self.process_count)
-        self.close()
+        if (self.process_count > 1):
+            self.process_pool = ProcessPool(self._accept_subprocess, process_count=self.process_count)
+            self.close()
+        else:
+            self._start_channel()
 
+    def handle_error(self):
+        exctype,excval,exctb = sys.exc_info()
+        if exctype is ssl.SSLError:
+            self.logger.info("SSL Error: %s",excval)
+        else:
+            self.logger.error("SMTPServer: handle_error: %s %s", excval,exctb)
+        if self.newsocket is not None:
+            self._shutdown_socket(self.newsocket)
+            self.newsocket = None
+    
     def _accept_subprocess(self, queue):
         while True:
             try:
                 self.socket.setblocking(1)
-                pair = self.accept()
+                self.logger.debug('_accept_subprocess(): waiting for connection.') 
                 map = {}
 
-                if pair is not None:
-
-                    self.logger.info('_accept_subprocess(): smtp connection accepted within subprocess.')
-
-                    newsocket, fromaddr = pair
-                    newsocket.settimeout(self.maximum_execution_time)
-
-                    if self.ssl:
-                        newsocket = ssl.wrap_socket(
-                            newsocket,
-                            server_side=True,
-                            certfile=self.certfile,
-                            keyfile=self.keyfile,
-                            ssl_version=self.ssl_version,
-                        )
-                    channel = SMTPChannel(
-                        self,
-                        newsocket,
-                        fromaddr,
-                        require_authentication=self.require_authentication,
-                        credential_validator=self.credential_validator,
-                        map=map
-                    )
-
-                    self.logger.info('_accept_subprocess(): starting asyncore within subprocess.')
-
-                    asyncore.loop(map=map)
-
-                    self.logger.error('_accept_subprocess(): asyncore loop exited.')
+                self._start_channel(doExitNow=True,map=map)
+                self.logger.debug('_accept_subprocess(): starting asyncore loop.') 
+                asyncore.loop(map=map)
+                self.logger.debug('_accept_subprocess(): smtp channel terminated.') 
             except (ExitNow, SSLError):
-                self._shutdown_socket(newsocket)
-                self.logger.info('_accept_subprocess(): smtp channel terminated asyncore.')
+                if self.newsocket is not None:
+                    self._shutdown_socket(self.newsocket)
+                    self.newsocket = None
+                self.logger.debug('_accept_subprocess(): smtp channel terminated asyncore.') 
             except Exception, e:
-                self._shutdown_socket(newsocket)
-                self.logger.error('_accept_subprocess(): uncaught exception: %s' % str(e))
+                if self.newsocket is not None:
+                    self._shutdown_socket(self.newsocket)
+                    self.newsocket = None
+                self.logger.error('_accept_subprocess(): uncaught exception: %s' % str(e)) 
+      
 
     def _shutdown_socket(self, s):
         try:
