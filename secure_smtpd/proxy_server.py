@@ -1,7 +1,8 @@
+import socket
 import smtplib
 import secure_smtpd
-from smtp_server import SMTPServer
-from store_credentials import StoreCredentials
+from .smtp_server import SMTPServer
+from .store_credentials import StoreCredentials
 
 class ProxyServer(SMTPServer):
     """Implements an open relay.  Inherits from secure_smtpd, so can handle
@@ -16,14 +17,16 @@ class ProxyServer(SMTPServer):
     """
     def __init__(self, *args, **kwargs):
         self.ssl_out_only = False
-        if kwargs.has_key('ssl_out_only'):
+        if 'ssl_out_only' in kwargs:
             self.ssl_out_only = kwargs.pop('ssl_out_only')
 
         self.debug = False
-        if kwargs.has_key('debug'):
+        if 'debug' in kwargs:
             self.debug = kwargs.pop('debug')
 
-        kwargs['credential_validator'] = StoreCredentials()
+        if kwargs['credential_validator'] is None:
+            kwargs['credential_validator'] = StoreCredentials()
+
         SMTPServer.__init__(self, *args, **kwargs)
 
     def process_message(self, peer, mailfrom, rcpttos, data):
@@ -78,10 +81,10 @@ class ProxyServer(SMTPServer):
                     self.logger.error('some connections refused %s', refused)
             finally:
                 s.quit()
-        except smtplib.SMTPRecipientsRefused, e:
+        except smtplib.SMTPRecipientsRefused as e:
             self.logger.exception('')
             refused = e.recipients
-        except (socket.error, smtplib.SMTPException), e:
+        except (socket.error, smtplib.SMTPException) as e:
             self.logger.exception('')
 
             # All recipients were refused.  If the exception had an associated

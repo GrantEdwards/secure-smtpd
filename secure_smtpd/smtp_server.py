@@ -1,11 +1,15 @@
 import secure_smtpd
 import ssl, smtpd, asyncore, socket, logging, signal, time, sys
 
-from smtp_channel import SMTPChannel
+from .smtp_channel import SMTPChannel
 from asyncore import ExitNow
-from process_pool import ProcessPool
-from Queue import Empty
+from .process_pool import ProcessPool
 from ssl import SSLError
+try:
+    from Queue import Empty
+except ImportError:
+    # We're on python3
+    from queue import Empty
 
 class SMTPServer(smtpd.SMTPServer):
 
@@ -30,6 +34,7 @@ class SMTPServer(smtpd.SMTPServer):
     def _accept_subprocess(self, queue):
         while True:
             try:
+                newsocket = None
                 self.socket.setblocking(1)
                 pair = self.accept()
                 map = {}
@@ -66,15 +71,16 @@ class SMTPServer(smtpd.SMTPServer):
             except (ExitNow, SSLError):
                 self._shutdown_socket(newsocket)
                 self.logger.info('_accept_subprocess(): smtp channel terminated asyncore.')
-            except Exception, e:
-                self._shutdown_socket(newsocket)
+            except Exception as e:
+                if newsocket is not None:
+                    self._shutdown_socket(newsocket)
                 self.logger.error('_accept_subprocess(): uncaught exception: %s' % str(e))
 
     def _shutdown_socket(self, s):
         try:
             s.shutdown(socket.SHUT_RDWR)
             s.close()
-        except Exception, e:
+        except Exception as e:
             self.logger.error('_shutdown_socket(): failed to cleanly shutdown socket: %s' % str(e))
 
 
